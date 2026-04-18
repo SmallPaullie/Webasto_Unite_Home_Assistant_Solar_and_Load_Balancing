@@ -2,11 +2,11 @@
 # Charging station should have (routed) IP connection with Home Assistant
 # Each charging station should have a different IP address. There can only be one active Modbus master connection at any time.
 # 
-# 1. Copy this file to the 'package's folder (create folder if not yet exists)
+# 1. Copy this file to the 'homeassistant/packages' folder (create folder if not yet exists)
 # 2. Fill in your sensors for the grid power measurement in the code lines below
 # 3. Add the lines below to your existing secrets.yaml file
-# 4. Add the lines to the configuration.yaml file
-# 5. If wanted/needed use supplied example HA View (TAB) for managing EV charger (see seperate view.yaml file)
+# 4. Add the lines below to the configuration.yaml file
+# 5. If wanted/needed use supplied example HA View (TAB) 'view_webasto.yaml' for managing EV charger (see seperate view.yaml file)
 # 6. Enjoy using solar power for EV charging and load balancing to prevent grid overload
 #
 # secrets.yaml

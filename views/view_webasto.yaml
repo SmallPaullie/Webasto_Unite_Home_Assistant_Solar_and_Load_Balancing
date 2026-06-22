@@ -1,4 +1,4 @@
-type: sidebar
+type: masonry
 title: EV Charger
 path: ev-charger
 icon: mdi:ev-station
@@ -27,7 +27,7 @@ cards:
         name: Beschikbaar solar vermogen
       - entity: sensor.webasto_unite_average_available_solar_current
         name: Gemiddeld beschikbare solar laadstroom
-      - entity: automation.set_webasto_unite_current_limit
+      - entity: automation.webasto_unite_limit_to_available_solar_power
         name: Beperk laadstroom naar solar vermogen
         icon: mdi:weather-sunny
       - entity: input_number.webasto_unite_solar_timeout_hours
@@ -89,3 +89,36 @@ cards:
     state_color: true
     show_header_toggle: false
     title: Webasto Unite EV oplaadstation info
+  - chart_type: bar
+    period: day
+    type: statistics-graph
+    entities:
+      - sensor.webasto_unite_meter_reading
+    stat_types:
+      - change
+    expand_legend: false
+    title: Geladen energie per dag
+    hide_legend: true
+    days_to_show: 31
+  - chart_type: bar
+    period: month
+    type: statistics-graph
+    entities:
+      - sensor.webasto_unite_meter_reading
+    stat_types:
+      - change
+    expand_legend: false
+    days_to_show: 1825
+    title: Geladen energie per maand
+    hide_legend: true
+  - chart_type: bar
+    period: year
+    type: statistics-graph
+    entities:
+      - sensor.webasto_unite_meter_reading
+    stat_types:
+      - change
+    expand_legend: false
+    title: Geladen energie per jaar
+    hide_legend: true
+    days_to_show: 1825

@@ -1,12 +1,14 @@
-# The Webasto Unite charging station acts as a slave device in Modbus TCP/IP communication.
+# The Webasto Unite EV charging station acts as a slave device in Modbus TCP/IP communication.
 # Charging station should have (routed) IP connection with Home Assistant
 # Each charging station should have a different IP address. There can only be one active Modbus master connection at any time.
+# V2.0.0
+# 2026-06-22 - Added support for Home Battery: EV has higher priority than home battery
 # 
 # 1. Copy this file to the 'homeassistant/packages' folder (create folder if not yet exists)
 # 2. Fill in your sensors for the grid power measurement in the code lines below
 # 3. Add the lines below to your existing secrets.yaml file
-# 4. Add the lines below to the configuration.yaml file
-# 5. If wanted/needed use supplied example HA View (TAB) 'view_webasto.yaml' for managing EV charger (see seperate view.yaml file)
+# 4. Add the lines to the configuration.yaml file
+# 5. If wanted/needed use supplied example HA View (TAB) 'view_webasto' for managing EV charger (see seperate view.yaml file)
 # 6. Enjoy using solar power for EV charging and load balancing to prevent grid overload
 #
 # secrets.yaml
@@ -16,7 +18,7 @@
 # 
 # configuration.yaml
 # homeassistant:
-#  packages: !include_dir_named packages
+#   packages: !include_dir_named packages
 
 
 template:
@@ -59,7 +61,15 @@ template:
         state: "{{states('sensor.actual_power_usage_2')}}" # << Fill in here your own sensor for current grid power usage (P1 meter)
         device_class: energy
         unit_of_measurement: kWh
-
+        
+      - name: battery_power_charge
+        unique_id: battery_power_charge
+        #### Fill in field ###
+        state: "{{states('sensor.marstek_venus_battery_charge_power')}}" # << Fill in here your own sensor for current battery power usage
+        state_class: measurement
+        unit_of_measurement: kW
+        
+#### Code starts here
         # make number of phases human readable
       - name: Webasto Unite Number of Phases Human Readable
         unique_id: Webasto_Unite_Number_of_Phases_Human_readable
@@ -178,6 +188,7 @@ template:
         unique_id: Webasto_Unite_Available_Solar_Power
         state: >
              {{ clamp((-(states('sensor.grid_actual_power_usage') | float(0)) +
+              states('sensor.battery_power_charge') | float(0) +
               states('sensor.webasto_unite_active_power_total') | float(0)),0,
               states('sensor.webasto_unite_chargepoint_power')| float(default=0)) | round(2) }}
         device_class: power
@@ -595,7 +606,7 @@ sensor:
     entity_id: sensor.webasto_unite_available_solar_current
     state_characteristic: average_linear
     max_age:
-      minutes: 8
+      minutes: 5
     sampling_size: 200
     precision: 0
     keep_last_sample: true
@@ -880,7 +891,7 @@ automation:
       - sensor.webasto_unite_resting_solar_wait_time
       above: 1
     - trigger: time_pattern
-      minutes: /2
+      minutes: /1
     conditions:
     - condition: and
       conditions:

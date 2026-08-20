@@ -8,4 +8,4 @@ Supports dynamic load balancing, solar charging in combination with home battery
 3. Add the lines in the secrets.yaml file to your existing secrets.yaml file
 4. Add the lines in the configuration.yaml file to the configuration.yaml file
 5. If wanted/needed (I recomment!) use supplied example HA View (TAB) 'views/view_webasto.yaml' for managing EV charger
-6. Enjoy using solar power for EV charging and load balancing to prevent grid overload
+6. Enjoy using solar power for EV charging, with load balancing to prevent grid overload, solar charging and home battery support

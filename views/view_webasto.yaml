@@ -10,7 +10,8 @@ header:
     content: |
       # EV Charger
 cards:
-  - type: entities
+  - color: state
+    type: entities
     entities:
       - entity: sensor.webasto_unite_charging_state_human_readable
         name: Laad status
@@ -30,19 +31,26 @@ cards:
       - entity: automation.webasto_unite_limit_to_available_solar_power
         name: Beperk laadstroom naar solar vermogen
         icon: mdi:weather-sunny
+      - entity: input_number.webasto_unite_minimum_solar_current_value_slider
+        name: Minimale solar laadstroom
       - entity: input_number.webasto_unite_solar_timeout_hours
         name: Maximale wachttijd solar energie
       - entity: sensor.webasto_unite_resting_solar_wait_time_human_readable
         name: Resterende solar wachttijd
       - entity: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
         name: Niet wachten op solar power (eenmalig)
+      - entity: sensor.battery_charged_level
+        name: Thuisbatterij niveau
+      - entity: input_number.webasto_unite_minimum_battery_level
+        name: Min. thuisbatterij niveau
+      - entity: input_number.webasto_unite_power_battery_charge_reserve
+        name: Vermogen voor thuisbatterij
       - entity: sensor.webasto_unite_session_duration_human_readable
         name: Tijdsduur laadsessie
       - entity: sensor.webasto_unite_charged_energy
         name: Geladen vermogen
       - entity: sensor.webasto_unite_session_max_current
         name: Piek stroom tijdens laadsessie
-    state_color: true
     show_header_toggle: false
     title: Webasto Unite EV laadsessie
   - type: entities

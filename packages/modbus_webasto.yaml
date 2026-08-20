@@ -3,6 +3,11 @@
 # Each charging station should have a different IP address. There can only be one active Modbus master connection at any time.
 # V2.0.0
 # 2026-06-22 - Added support for Home Battery: EV has higher priority than home battery
+# V2.1.0
+# 2026-08-02 - Increased maximum solar wait time from 36 to 72h
+# 2026-08-04 - Added support for reserving solar power for the home battery, is charged level is below a settable level
+# 2026-08-17 - Added slider for minimum charge current when solar power is used
+# 2026-08-20 - When solar power is used, after cable is connected, charge for 30 sec on full power. Some cars needs this to inialize the charge process
 # 
 # 1. Copy this file to the 'homeassistant/packages' folder (create folder if not yet exists)
 # 2. Fill in your sensors for the grid power measurement in the code lines below
@@ -12,9 +17,9 @@
 # 6. Enjoy using solar power for EV charging and load balancing to prevent grid overload
 #
 # secrets.yaml
-# webasto_host: 172.16.5.197 <== IP address of the EV charger
-# webasto_port: 502 <==  TCP port number of EV charger
-# webasto_slave: 255 <== slave number of EV charger, mostly 255
+# webasto_host: 172.16.5.197 <== IP address of your EV charger
+# webasto_port: 502 <==  TCP port number of your EV charger, default 502
+# webasto_slave: 255 <== slave number of EV charger, default 255
 # 
 # configuration.yaml
 # homeassistant:
@@ -68,6 +73,15 @@ template:
         state: "{{states('sensor.marstek_venus_battery_charge_power')}}" # << Fill in here your own sensor for current battery power usage
         state_class: measurement
         unit_of_measurement: kW
+        device_class: power
+        
+      - name: battery_charged_level
+        unique_id: battery_charged_level
+        #### Fill in field ###
+        state: "{{states('sensor.marstek_venus_battery_changed_percentage')}}" # << Fill in here your own sensor for current battery level %
+        state_class: measurement
+        unit_of_measurement: '%'
+        icon: "mdi:battery-high"
         
 #### Code starts here
         # make number of phases human readable
@@ -187,15 +201,38 @@ template:
       - name: "Webasto Unite Available Solar Power"
         unique_id: Webasto_Unite_Available_Solar_Power
         state: >
-             {{ clamp((-(states('sensor.grid_actual_power_usage') | float(0)) +
-              states('sensor.battery_power_charge') | float(0) +
-              states('sensor.webasto_unite_active_power_total') | float(0)),0,
-              states('sensor.webasto_unite_chargepoint_power')| float(default=0)) | round(2) }}
+          {% if (state_attr('automation.webasto_unite_charging_is_starting', 'current') | int(0)) == 0 %}
+
+            {% set battery_level = states('sensor.battery_charged_level') | float(0) %}
+            {% set min_level = states('input_number.webasto_unite_minimum_battery_level') | float(0) %}
+
+            {% if battery_level < min_level %}
+              {% set reserve = states('input_number.webasto_unite_power_battery_charge_reserve') | float(0) %}
+            {% else %}
+              {% set reserve = 0 %}
+            {% endif %}
+
+            {% set reserve = reserve / 1000 | round(2) %}
+
+            {{ clamp(
+                (
+                  -(states('sensor.grid_actual_power_usage') | float(0))
+                  - (states('sensor.battery_power_charge') | float(0))
+                  + (states('sensor.webasto_unite_active_power_total') | float(0))
+                  - reserve
+                ),
+                0,
+                states('sensor.webasto_unite_chargepoint_power') | float(0)
+              ) | round(2)
+            }}
+
+          {% else %}
+            {{ states('sensor.webasto_unite_available_solar_power') }}
+          {% endif %}
         device_class: power
         state_class: measurement
         unit_of_measurement: kW
         icon: "mdi:solar-power-variant"
-        
         # calculate available Solar Current
       - name: "Webasto Unite Available Solar Current"
         unique_id: Webasto_Unite_Available_Solar_Current
@@ -586,19 +623,46 @@ input_number:
   webasto_unite_current_value_slider:
     name: Webasto Unite Current Value Slider
     min: 0    # Off state
-    max: 16   # Maximum charging current
+    max: 32   # Maximum charging current
     step: 1
     unit_of_measurement: 'A'
     icon: "mdi:current-ac"
     
+  webasto_unite_minimum_solar_current_value_slider:
+    name: Webasto Unite Minimum Solar Current Value Slider
+    min: 0    # Off state
+    max: 16   # Maximum of minimum current
+    step: 1
+    unit_of_measurement: 'A'
+    icon: "mdi:current-ac"
+
   webasto_unite_solar_timeout_hours:
     name: Webasto Unite Solar Timeout hours
     min: 1
-    max: 36
+    max: 72
+    initial: 24
     step: 1
     unit_of_measurement: 'h'
     icon: "mdi:timer-sync"
 
+  webasto_unite_power_battery_charge_reserve:
+    name: "Webasto Unite Power Reserve for Battery"
+    min: 0
+    max: 2000
+    initial: 800
+    step: 100
+    unit_of_measurement: 'W'
+    icon: "mdi:home-battery"
+    
+  webasto_unite_minimum_battery_level:
+    name: "Webasto Unite Minimum Battery Level %"
+    min: 0
+    max: 100
+    initial: 65
+    step: 1
+    unit_of_measurement: '%'
+    icon: "mdi:battery-positive"
+    
 sensor:
   - platform: statistics
     name: "Webasto Unite Average Available Solar Current"
@@ -627,6 +691,8 @@ recorder:
       - switch.Webasto_Unite_Alive_Register
       - sensor.Webasto_Unite_Resting_Solar_Wait_Time
       - sensor.webasto_unite_resting_solar_wait_time_human_readable
+      - sensor.battery_power_charge
+      - sensor.battery_charged_level
 
 history:
   exclude:
@@ -638,6 +704,8 @@ history:
       - switch.Webasto_Unite_Alive_Register
       - sensor.Webasto_Unite_Resting_Solar_Wait_Time
       - sensor.webasto_unite_resting_solar_wait_time_human_readable
+      - sensor.battery_power_charge
+      - sensor.battery_charged_level
 
 logbook:
   exclude:
@@ -649,6 +717,8 @@ logbook:
       - switch.Webasto_Unite_Alive_Register
       - sensor.Webasto_Unite_Resting_Solar_Wait_Time
       - sensor.webasto_unite_resting_solar_wait_time_human_readable
+      - sensor.battery_power_charge
+      - sensor.battery_charged_level
 
 # Automations
 automation:
@@ -668,8 +738,8 @@ automation:
   # Handles changes to the charging current slider
   # - Updates alive register to prevent timeout
   # - Turns wallbox on/off based on current (on >= 5A, off < 5A)
-  - alias: Set Webasto Unite Current Limit
-    description: Set Webasto Unite Current Limit
+  - alias: Webasto Unite Set Current Limit
+    description: Webasto Unite Set Current Limit
     id: Webasto_Unite_set_current_limit
     initial_state: true
     triggers:
@@ -890,8 +960,13 @@ automation:
       entity_id:
       - sensor.webasto_unite_resting_solar_wait_time
       above: 1
+    - trigger: state
+      entity_id:
+      - input_number.webasto_unite_minimum_solar_current_value_slider
+      for:
+        seconds: 1
     - trigger: time_pattern
-      minutes: /1
+      minutes: /2
     conditions:
     - condition: and
       conditions:
@@ -912,12 +987,17 @@ automation:
       target:
         entity_id: input_number.webasto_unite_current_value_slider
       data:
-        value: '{{(states(''sensor.webasto_unite_average_available_solar_current'') | int(0))}}'
+        value: >
+          {{ clamp(
+              states('sensor.webasto_unite_average_available_solar_current') | int(0),
+              states('input_number.webasto_unite_minimum_solar_current_value_slider') | int(0),
+              states('sensor.webasto_unite_evse_max_current') | int(0)
+          ) }}
     mode: single
-      
-  - alias: Reset Onetime Skip Solar Energy Usage
-    id: Reset_Onetime_Skip_Solar_Energy_Usage
-    description: 'Reset Onetime Skip Solar Energy Usage'
+# This automation is executed as soon as the charger becomes available      
+  - alias: Webasto Unite Reset Onetime Skip Solar Energy Usage
+    id: Webasto_Unite_Reset_Onetime_Skip_Solar_Energy_Usage
+    description: 'Webasto Reset Onetime Skip Solar Energy Usage'
     triggers:
     - trigger: numeric_state
       entity_id:
@@ -935,4 +1015,67 @@ automation:
       target:
         entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
       data: {}
+    mode: single
+# This automation is executed as soon as charging is starting      
+  - alias: Webasto Unite Charging is Starting
+    id: Webasto_Unite_Charging_is_Starting
+    description: 'Initialize charging by setting charge current to max for a short time'
+    triggers:
+      - trigger: state
+        entity_id: sensor.webasto_unite_charge_point_state
+        from:
+          - '0'
+        to:
+          - '1'
+          - '2'
+          - '3'
+          - '4'
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+    conditions:
+      - condition: state
+        entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+        state:
+        - 'off'
+      - condition: numeric_state
+        entity_id: sensor.webasto_unite_resting_solar_wait_time
+        above: 1
+      - condition: state
+        entity_id: automation.webasto_unite_limit_to_available_solar_power
+        state:
+          - 'on'
+    actions:
+      - action: input_number.set_value
+        metadata: {}
+# Set current to maximum available from the grid
+        target:
+          entity_id: input_number.webasto_unite_current_value_slider
+        data:
+          value: "{{states('sensor.webasto_unite_max_grid_available_current') | int(0)}}"
+ # wait for 30 seconds
+      - delay:
+          hours: 0
+          minutes: 0
+          seconds: 30
+          milliseconds: 0
+ # set back to current average available solar current
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.webasto_unite_current_value_slider
+        data:
+          value: "{{states('sensor.Webasto_Unite_Average_Available_Solar_Current') | int(0)}}"
+      - action: automation.trigger
+        metadata: {}
+        target:
+          entity_id: automation.webasto_unite_limit_to_available_solar_power
+        data:
+          skip_condition: false
+ # wait for 25 sceconds
+      - delay:
+          hours: 0
+          minutes: 0
+          seconds: 25
+          milliseconds: 0
     mode: single

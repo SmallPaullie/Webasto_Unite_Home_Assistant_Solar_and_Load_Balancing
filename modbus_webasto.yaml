@@ -1,0 +1,1082 @@
+# The Webasto Unite EV charging station acts as a slave device in Modbus TCP/IP communication.
+# Charging station should have (routed) IP connection with Home Assistant
+# Each charging station should have a different IP address. There can only be one active Modbus master connection at any time.
+# V2.0.0
+# 2026-06-22 - Added support for Home Battery: EV has higher priority than home battery
+# V2.1.0
+# 2026-08-02 - Increased maximum solar wait time from 36 to 72h
+# 2026-08-04 - Added support for reserving solar power for the home battery, is charged level is below a settable level
+# 2026-08-17 - Added slider for minimum charge current when solar power is used
+# 2026-08-20 - When solar power is used, after cable is connected, charge for 30 sec on full power. Some cars needs this to inialize the charge process
+# 2026-09-09 - Above is changed to: When solar is used for charging, every time charging is (re)started, charge for 30 sec on full power.
+# 
+# 1. Copy this file to the 'homeassistant/packages' folder (create folder if not yet exists)
+# 2. Fill in your sensors for the grid power measurement in the code lines below
+# 3. Add the lines below to your existing secrets.yaml file
+# 4. Add the lines to the configuration.yaml file
+# 5. If wanted/needed use supplied example HA View (TAB) 'view_webasto' for managing EV charger (see seperate view.yaml file)
+# 6. Enjoy using solar power for EV charging and load balancing to prevent grid overload
+#
+# secrets.yaml
+# webasto_host: 172.16.5.197 <== IP address of your EV charger
+# webasto_port: 502 <==  TCP port number of your EV charger, default 502
+# webasto_slave: 255 <== slave number of EV charger, default 255
+# 
+# configuration.yaml
+# homeassistant:
+#   packages: !include_dir_named packages
+
+
+template:
+  - sensor:
+      - name: grid_current_phase_L1
+        unique_id: grid_current_phase_L1
+        #### Fill in field ###
+        state: "{{states('sensor.current_phase_1')}}" # << Fill in here your own L1 sensor for grid current measure (P1 meter)
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: grid_current_phase_L2
+        unique_id: grid_current_phase_L2
+        #### Fill in field ###
+        state: "{{states('sensor.current_phase_2')}}" # << Fill in here your own L2 sensor for grid current measure (P1 meter)
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: grid_current_phase_L3
+        unique_id: grid_current_phase_L3
+        #### Fill in field ###
+        state: "{{states('sensor.current_phase_3')}}" # << Fill in here your own L3 sensor for grid current measure (P1 meter)
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: grid_maximum_current_per_phase
+        unique_id: grid_maximum_current_per_phase
+        #### Fill in field ###
+        state: "{{states('input_number.energy_current_limit_per_phase')}}" # << Fill in here your sensor or value (i.e. "25") for maximum grid current per phase
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: grid_actual_power_usage
+        unique_id: grid_actual_power_usage
+        #### Fill in field ###
+        state: "{{states('sensor.actual_power_usage_2')}}" # << Fill in here your own sensor for current grid power usage (P1 meter)
+        device_class: energy
+        unit_of_measurement: kWh
+        
+      - name: battery_power_charge
+        unique_id: battery_power_charge
+        #### Fill in field ###
+        state: "{{states('sensor.marstek_venus_battery_charge_power')}}" # << Fill in here your own sensor for current battery power usage
+        state_class: measurement
+        unit_of_measurement: kW
+        device_class: power
+        
+      - name: battery_charged_level
+        unique_id: battery_charged_level
+        #### Fill in field ###
+        state: "{{states('sensor.marstek_venus_battery_changed_percentage')}}" # << Fill in here your own sensor for current battery level %
+        state_class: measurement
+        unit_of_measurement: '%'
+        icon: "mdi:battery-high"
+        
+#### Code starts here
+        # make number of phases human readable
+      - name: Webasto Unite Number of Phases Human Readable
+        unique_id: Webasto_Unite_Number_of_Phases_Human_readable
+        state: >
+          {% set state_map = {
+            0: "1/3",
+            1: "3/3"
+          } %}
+          {{ state_map.get(states('sensor.Webasto_Unite_Number_of_Phases') | int(-1),'0/3') }}
+        icon: "mdi:star-three-points"
+
+        # make chargepoint state human readable
+      - name: Webasto Unite Charge Point State Human Readable
+        unique_id: Webasto_Unite_Charge_Point_State_Human_Readable
+        state: >
+          {% set state_map = {
+            0: "Beschikbaar",
+            1: "Auto gekoppeld, permissie aanvragen",
+            2: "Laden",
+            3: "Gepauzeerd door EVSE",
+            4: "Gepauzeerd door auto",
+            5: "Afronden",
+            6: "Gereserveerd",
+            7: "Niet beschikbaar",
+            8: "Fout"
+          } %}
+          {{ state_map.get(states('sensor.Webasto_Unite_charge_point_state') | int(-1),'Onbekend') }}
+        icon: "mdi:ev-station"
+        
+        # make charging state human readable
+      - name: Webasto Unite Charging State Human Readable
+        unique_id: Webasto_Unite_Charging_State_Human_Readable
+        state: >
+          {% set state_map = {
+            0: "Niet aan het laden",
+            1: "Laden"
+          } %}
+          {{ state_map.get(states('sensor.Webasto_Unite_charging_state') | int(-1),'Onbekend') }}
+        icon: "mdi:ev-station"
+        
+        # make equipment state human readable
+      - name: Webasto Unite Equipment State Human Readable
+        unique_id: Webasto_Unite_Equipment_State_Human_Readable
+        state: >
+          {% set state_map = {
+            0: "Initializeren",
+            1: "Actief",
+            2: "Fout",
+            3: "Uitgeschakeld",
+            4: "Update verwerken"
+          } %}
+          {{ state_map.get(states('sensor.Webasto_Unite_equipment_state') | int(default=-1), 'Onbekend') }}
+        icon: "mdi:power-standby"
+        
+        # make cable state human readable
+      - name: Webasto Unite Cable State Human Readable
+        unique_id: Webasto_Unite_Cable_State_Human_Readable
+        state: >
+          {% set state_map = {
+            0: "Geen kabel verbonden",
+            1: "Kabel verbonden, geen auto verbonden",
+            2: "Kabel verbonden, auto verbonden",
+            3: "Kabel verbonden, auto verbonden, kabel op slot"
+          } %}
+          {{ state_map.get(states('sensor.Webasto_Unite_Cable_State') | int(-1),'Onbekend') }}
+        icon: "mdi:cable-data"
+      - name: Webasto Unite EVSE Fault Code Human Readable
+        unique_id: Webasto_Unite_EVSE_Fault_Code_Human_Readable
+        state: >
+          {% set fault_code = states('sensor.Webasto_Unite_evse_fault_code') | int(-1) %}
+          {% if fault_code == 0 %}
+            Geen fout
+          {% else %}
+            Foutcode {{ fault_code }}
+          {% endif %}
+        icon: "mdi:flash-alert"
+        
+        # Format charge session time
+      - name: "Webasto Unite Session Duration Human Readable"
+        unique_id: Webasto_Unite_Session_Duration_Human_Readable
+        state: >
+          {% set sec = states('sensor.Webasto_Unite_Session_Duration') | int(0) %}
+          {% set days = (sec // 86400) %}
+          {% set hours = ((sec % 86400) // 3600) %}
+          {% set minutes = ((sec % 3600) // 60) %}
+          {{ days }}d {{ hours }}h {{ minutes }}m
+        icon: "mdi:timer-check-outline"
+
+        # Next template sensor is for calculating the maximum available current from grid
+        # to prevent overload of the grid
+        # It uses the entered maximum values minus the highest value of 3 phases. This
+        # is incremented with the maximum now used current and limited to the maximum
+        # set in the EV charger
+      - name: "Webasto Unite Max Grid Available Current"
+        unique_id: webasto_unite_max_grid_available_current
+        state: >
+            {% set current_phase_max_of_three = [
+              states('sensor.grid_current_phase_L1') | float(0),
+              states('sensor.grid_current_phase_L2') | float(0),
+              states('sensor.grid_current_phase_L3') | float(0)
+            ] | max %}
+            {% set webasto_unite_charging_current_max_of_three = [
+              states('sensor.webasto_unite_charging_current_l1') | float(0),
+              states('sensor.webasto_unite_charging_current_l2') | float(0),
+              states('sensor.webasto_unite_charging_current_l3') | float(0)
+            ] | max %}
+            {{ clamp((( states('sensor.grid_maximum_current_per_phase') | float(25)) - 
+            current_phase_max_of_three + webasto_unite_charging_current_max_of_three),0,
+            (states('sensor.webasto_unite_evse_max_current') | float(16) )) | int(0) }}
+        device_class: current
+        unit_of_measurement: A
+        icon: "mdi:transmission-tower-export"
+        
+        # calculate available Solar Power
+      - name: "Webasto Unite Available Solar Power"
+        unique_id: Webasto_Unite_Available_Solar_Power
+        state: >
+          {% if (state_attr('automation.webasto_unite_charging_is_starting', 'current') | int(0)) == 0 %}
+
+            {% set battery_level = states('sensor.battery_charged_level') | float(0) %}
+            {% set min_level = states('input_number.webasto_unite_minimum_battery_level') | float(0) %}
+
+            {% if battery_level < min_level %}
+              {% set reserve = states('input_number.webasto_unite_power_battery_charge_reserve') | float(0) %}
+            {% else %}
+              {% set reserve = 0 %}
+            {% endif %}
+
+            {% set reserve = reserve / 1000 | round(2) %}
+
+            {{ clamp(
+                (
+                  -(states('sensor.grid_actual_power_usage') | float(0))
+                  - (states('sensor.battery_power_charge') | float(0))
+                  + (states('sensor.webasto_unite_active_power_total') | float(0))
+                  - reserve
+                ),
+                0,
+                states('sensor.webasto_unite_chargepoint_power') | float(0)
+              ) | round(2)
+            }}
+
+          {% else %}
+            {{ states('sensor.webasto_unite_available_solar_power') }}
+          {% endif %}
+        device_class: power
+        state_class: measurement
+        unit_of_measurement: kW
+        icon: "mdi:solar-power-variant"
+        # calculate available Solar Current
+      - name: "Webasto Unite Available Solar Current"
+        unique_id: Webasto_Unite_Available_Solar_Current
+        state: >
+          {% set state_map = {
+            0: 1,
+            1: 3 } %}
+          {% set available_phases = state_map.get(states('sensor.Webasto_Unite_Number_of_Phases') |
+          int(1),'1') %} 
+          {{(states('sensor.webasto_unite_available_solar_power') |float(0) *
+          1000 / 230 / available_phases ) | round(0) | int(0) }}
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+        icon: "mdi:solar-power-variant"
+        
+        # calculate time resting until charging starts independent of solar power
+      - name: "Webasto Unite Resting Solar Wait Time"
+        unique_id: Webasto_Unite_Resting_Solar_Wait_Time
+        state: >
+            {{ clamp((((states('input_number.webasto_unite_solar_timeout_hours') | int(0)) * 3600 ) -
+              states('sensor.Webasto_Unite_Session_Duration') | int(0)),0,
+              (states('input_number.webasto_unite_solar_timeout_hours') | int(default=0)*3600)) | int(0) }}
+        device_class: duration
+        state_class: measurement
+        unit_of_measurement: s
+        
+        # Make solar wait time human readable
+      - name: "Webasto Unite Resting Solar Wait Time Human Readable"
+        unique_id: Webasto_Unite_Resting_Solar_Wait_Time_Human_Readable
+        state: >
+          {% set sec = states('sensor.Webasto_Unite_Resting_Solar_Wait_Time') | int(0) %}
+          {% set days = (sec // 86400) %}
+          {% set hours = ((sec % 86400) // 3600) %}
+          {% set minutes = ((sec % 3600) // 60) %}
+          {{ days }}d {{ hours }}h {{ minutes }}m
+        icon: "mdi:timer-check-outline"
+
+# Main Modbus configuration
+modbus:
+  - name: Webasto_Unite
+    type: tcp
+    timeout: 5
+    host: !secret webasto_host
+    port: !secret webasto_port
+    
+    # Modbus sensor definitions
+    sensors:
+      # State sensors
+      - name: Webasto Unite Serial Number
+        unique_id: Webasto_Unite_Serial_Number
+        slave: !secret webasto_slave
+        input_type: input
+        address: 100
+        count: 25
+        data_type: string
+
+      - name: Webasto Unite Firmware Version
+        unique_id: Webasto_Unite_Firmware_Version
+        slave: !secret webasto_slave
+        input_type: input
+        address: 230
+        count: 50
+        data_type: string
+
+      - name: Webasto Unite Chargepoint Power
+        unique_id: Webasto_Unite_Chargepoint_Power
+        slave: !secret webasto_slave
+        input_type: input
+        address: 400
+        data_type: uint32
+        device_class: power
+        state_class: measurement
+        scale: 0.001
+        precision: 2
+        unit_of_measurement: kW
+
+      - name: Webasto Unite Number of Phases
+        unique_id: Webasto_Unite_Number_of_Phases
+        slave: !secret webasto_slave
+        input_type: input
+        address: 404
+        data_type: uint16
+
+      - name: Webasto Unite Charge Point_State
+        unique_id: Webasto_Unite_Charge_Point_State
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1000
+        scan_interval: 5
+        data_type: uint16
+        # States:
+        # 0: Available
+        # 1: Preparing
+        # 2: Charging
+        # 3: SuspendedEVSE
+        # 4: SuspendedEV
+        # 5: Finishing
+        # 6: Reserved
+        # 7: Unavailable
+        # 8: Faulted
+
+      - name: Webasto Unite Charging State
+        unique_id: Webasto_Unite_Charging_State
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1001
+        scan_interval: 5
+        data_type: uint16
+        # States:
+        # 0: Not Charging
+        # 1: Charging
+
+      - name: Webasto Unite Equipment State
+        unique_id: Webasto_Unite_Equipment_State
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1002
+        data_type: uint16
+        # States:
+        # 0: Initializing
+        # 1: Running
+        # 2: Fault
+        # 3: Disabled
+        # 4: Updating
+
+      - name: Webasto Unite Cable State
+        unique_id: Webasto_Unite_Cable_State
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1004
+        data_type: uint16
+        # States:
+        # 0: Cable not connected
+        # 1: Cable connected, vehicle not connected
+        # 2: Cable connected, vehicle connected
+        # 3: Cable connected, vehicle connected, cable locked
+
+      - name: Webasto Unite EVSE Fault Code
+        unique_id: Webasto_Unite_EVSE_Fault_Code
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1006
+        data_type: uint16
+        # States:
+        # 0: No fault
+        # Other: Fault code
+
+      - name: Webasto Unite Charging Current L1
+        unique_id: Webasto_Unite_Charging_Current_L1
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1008
+        scan_interval: 5
+        data_type: uint16
+        offset: 0
+        scale: 0.001
+        precision: 0
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite Charging Current L2
+        unique_id: Webasto_Unite_Charging_Current_L2
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1010
+        scan_interval: 5
+        data_type: uint16
+        offset: 0
+        scale: 0.001
+        precision: 0
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite Charging Current L3
+        unique_id: Webasto_Unite_Charging_Current_L3
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1012
+        scan_interval: 5
+        data_type: uint16
+        offset: 0
+        scale: 0.001
+        precision: 0
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite Active Power Total
+        unique_id: Webasto_Unite_Active_Power_Total
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1020
+        scan_interval: 5
+        data_type: uint32
+        device_class: power
+        state_class: measurement
+        scale: 0.001
+        precision: 2
+        unit_of_measurement: kW
+
+      - name: Webasto Unite Active Power L1
+        unique_id: Webasto_Unite_Active_Power_L1
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1024
+        scan_interval: 5
+        data_type: uint32
+        device_class: power
+        state_class: measurement
+        scale: 0.001
+        precision: 2
+        unit_of_measurement: kW
+
+      - name: Webasto Unite Active Power L2
+        unique_id: Webasto_Unite_Active_Power_L2
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1028
+        scan_interval: 5
+        data_type: uint32
+        device_class: power
+        state_class: measurement
+        scale: 0.001
+        precision: 2
+        unit_of_measurement: kW
+
+      - name: Webasto Unite Active Power L3
+        unique_id: Webasto_Unite_Active_Power_L3
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1032
+        scan_interval: 5
+        data_type: uint32
+        device_class: power
+        state_class: measurement
+        scale: 0.001
+        precision: 2
+        unit_of_measurement: kW
+
+      - name: Webasto Unite Meter Reading
+        unique_id: Webasto_Unite_Meter_Reading
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1036
+        data_type: uint32
+        device_class: energy
+        state_class: total_increasing
+        offset: 0
+        scale: 0.1
+        precision: 2
+        unit_of_measurement: kWh
+
+      - name: Webasto Unite Session Max Current
+        unique_id: Webasto_Unite_Session_Max_Current
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1100
+        data_type: uint16
+        device_class: current
+        state_class: measurement
+        precision: 2
+        unit_of_measurement: A
+
+      - name: Webasto Unite EVSE Min Current
+        unique_id: Webasto_Unite_EVSE_Min_Current
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1102
+        data_type: uint16
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite EVSE Max Current
+        unique_id: Webasto_Unite_EVSE_Max_Current
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1104
+        data_type: uint16
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite Cable Max Current
+        unique_id: Webasto_Unite_Cable_Max_Current
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1106
+        data_type: uint16
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite EV Max Current
+        unique_id: Webasto_Unite_EV_Max_Current
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1108
+        data_type: uint16
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+
+      - name: Webasto Unite Charged Energy
+        unique_id: Webasto_Unite_Charged_Energy
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1502
+        data_type: uint32
+        device_class: energy
+        state_class: total_increasing
+        scale: 0.001
+        precision: 2
+        unit_of_measurement: kWh
+        # Sum of charged energy for the current session
+
+      - name: Webasto Unite Session Start Time
+        unique_id: Webasto_Unite_Session_Start_Time
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1504
+        data_type: uint32
+
+      - name: Webasto Unite Session Duration
+        unique_id: Webasto_Unite_Session_Duration
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1508
+        scan_interval: 5
+        data_type: uint32
+        device_class: duration
+        state_class: measurement
+        unit_of_measurement: s
+
+      - name: Webasto Unite Session End Time
+        unique_id: Webasto_Unite_Session_End_Time
+        slave: !secret webasto_slave
+        input_type: input
+        address: 1512
+        data_type: uint32
+
+      - name: Webasto Unite Failsafe Current
+        unique_id: Webasto_Unite_Failsafe_Current
+        slave: !secret webasto_slave
+        input_type: holding
+        address: 2000
+        data_type: uint16
+        device_class: current
+        state_class: measurement
+        unit_of_measurement: A
+        # Failsafe charging current during communication failure
+        # R/W: Can be set in the Unite WebUI (Standard:6A)
+
+      - name: Webasto Unite Failsafe Timeout
+        unique_id: Webasto_Unite_Failsafe_Timeout
+        slave: !secret webasto_slave
+        input_type: holding
+        address: 2002
+        data_type: uint16
+        unit_of_measurement: s
+        device_class: duration
+        state_class: measurement
+        # Communication timeout for switching to Failsafe charging current. If the timeout has occurred and the TCP socket is still active, TCP socket restarts. If set, Failsafe period is timeout/2, otherwise 20 sec.
+        # R/W: No need to change (Standard: 20 seconds) - if changed make sure to adjust the keep-alive automation
+        
+    # Switches configuration
+    switches:
+      - name: Webasto Unite Alive Register
+        unique_id: Webasto_Unite_Alive_Register
+        slave: !secret webasto_slave
+        write_type: holding
+        address: 6000
+        command_on: 1
+        command_off: 0
+        verify:
+          delay: 5
+        # Keep-alive mechanism:
+        # - Home Assistant (Master) writes 1
+        # - EVSE (Slave) writes 0
+        # - EVSE checks this register every (Failsafe Timeout/2) seconds
+        # - If not set to 1, falls back to failsafe current
+
+# Input controls
+input_number:
+  webasto_unite_current_value_slider:
+    name: Webasto Unite Current Value Slider
+    min: 0    # Off state
+    max: 32   # Maximum charging current
+    step: 1
+    unit_of_measurement: 'A'
+    icon: "mdi:current-ac"
+    
+  webasto_unite_minimum_solar_current_value_slider:
+    name: Webasto Unite Minimum Solar Current Value Slider
+    min: 0    # Off state
+    max: 16   # Maximum of minimum current
+    step: 1
+    unit_of_measurement: 'A'
+    icon: "mdi:current-ac"
+
+  webasto_unite_solar_timeout_hours:
+    name: Webasto Unite Solar Timeout hours
+    min: 1
+    max: 72
+    step: 1
+    unit_of_measurement: 'h'
+    icon: "mdi:timer-sync"
+
+  webasto_unite_power_battery_charge_reserve:
+    name: "Webasto Unite Power Reserve for Battery"
+    min: 0
+    max: 2000
+    step: 100
+    unit_of_measurement: 'W'
+    icon: "mdi:home-battery"
+    
+  webasto_unite_minimum_battery_level:
+    name: "Webasto Unite Minimum Battery Level %"
+    min: 0
+    max: 100
+    step: 1
+    unit_of_measurement: '%'
+    icon: "mdi:battery-positive"
+    
+sensor:
+  - platform: statistics
+    name: "Webasto Unite Average Available Solar Current"
+    unique_id: webasto_unite_average_available_solar_current
+    entity_id: sensor.webasto_unite_available_solar_current
+    state_characteristic: average_linear
+    max_age:
+      minutes: 5
+    sampling_size: 200
+    precision: 0
+    keep_last_sample: true
+
+input_boolean:
+  webasto_unite_onetime_skip_solar_energy_usage:
+    name: Webasto Unite Onetime Skip Solar Energy Usage
+    icon: "mdi:timer-remove"
+
+# Recorder configuration
+recorder:
+  exclude:
+    entities:
+      - automation.Webasto_Unite_keep_alive
+      - sensor.Webasto_Unite_Alive_Register
+      - sensor.Webasto_Unite_Session_Duration_Human_Readable
+      - sensor.Webasto_Unite_Session_Duration
+      - switch.Webasto_Unite_Alive_Register
+      - sensor.Webasto_Unite_Resting_Solar_Wait_Time
+      - sensor.webasto_unite_resting_solar_wait_time_human_readable
+      - sensor.battery_power_charge
+      - sensor.battery_charged_level
+
+history:
+  exclude:
+    entities:
+      - automation.Webasto_Unite_keep_alive
+      - sensor.Webasto_Unite_Alive_Register
+      - sensor.Webasto_Unite_Session_Duration_Human_Readable
+      - sensor.Webasto_Unite_Session_Duration
+      - switch.Webasto_Unite_Alive_Register
+      - sensor.Webasto_Unite_Resting_Solar_Wait_Time
+      - sensor.webasto_unite_resting_solar_wait_time_human_readable
+      - sensor.battery_power_charge
+      - sensor.battery_charged_level
+
+logbook:
+  exclude:
+    entities:
+      - automation.Webasto_Unite_keep_alive
+      - sensor.Webasto_Unite_Alive_Register
+      - sensor.Webasto_Unite_Session_Duration_Human_Readable
+      - sensor.Webasto_Unite_Session_Duration
+      - switch.Webasto_Unite_Alive_Register
+      - sensor.Webasto_Unite_Resting_Solar_Wait_Time
+      - sensor.webasto_unite_resting_solar_wait_time_human_readable
+      - sensor.battery_power_charge
+      - sensor.battery_charged_level
+
+# Automations
+automation:
+  # Keep-alive automation
+  - alias: Webasto Unite Keep Alive
+    description: Webasto Unite Keep Alive
+    id: Webasto_Unite_keep_alive
+    triggers:
+      - trigger: time_pattern
+        seconds: /10 # Half of the failsafe timeout
+    actions:
+      - action: switch.turn_on
+        target:
+          entity_id: switch.Webasto_Unite_alive_register
+    mode: single
+    
+  # Handles changes to the charging current slider
+  # - Updates alive register to prevent timeout
+  # - Turns wallbox on/off based on current (on >= 5A, off < 5A)
+  - alias: Webasto Unite Set Current Limit
+    description: Webasto Unite Set Current Limit
+    id: Webasto_Unite_set_current_limit
+    initial_state: true
+    triggers:
+      - trigger: state
+        entity_id:
+          - input_number.Webasto_Unite_current_value_slider
+        for:
+          seconds: 2
+      - trigger: state
+        entity_id:
+          - sensor.webasto_unite_equipment_state
+        from:
+          - unavailable
+        to:
+          - "1"
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+      - trigger: numeric_state
+        entity_id:
+          - sensor.webasto_unite_charge_point_state
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+        above: 0
+        below: 6
+      - trigger: homeassistant
+        event: start
+      - trigger: event
+        event_type: homeassistant_started
+      - trigger: time_pattern
+        minutes: /2
+    condition: []
+    actions:
+      - action: modbus.write_register
+        data:
+          hub: Webasto_Unite
+          address: 5004
+          slave: !secret webasto_slave
+          # Set the value of the register to the value of the input_number
+          value:
+            - "{{ (states.input_number.Webasto_Unite_current_value_slider.state | int(0)) }}"
+      - action: modbus.write_register
+        data:
+          hub: Webasto_Unite
+          address: 6000  # Alive Register
+          slave: !secret webasto_slave
+          value: [1]
+          
+    # This automation adjust maximum current in case of grid overload
+  - alias: Webasto Unite auto adjust current
+    description: "Webasto Unite auto adjust current"
+    id: Webasto_Unite_auto_adjust_current
+    triggers:
+      - trigger: numeric_state
+        entity_id:
+          - sensor.webasto_unite_max_grid_available_current
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 10
+        below: input_number.webasto_unite_current_value_slider
+      - trigger: numeric_state
+        entity_id:
+          - sensor.webasto_unite_max_grid_available_current
+        for:
+          hours: 0
+          minutes: 2
+          seconds: 30
+        above: input_number.webasto_unite_current_value_slider
+      - trigger: numeric_state
+        entity_id:
+          - sensor.webasto_unite_charge_point_state
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+        above: 0
+        below: 6
+      - trigger: state
+        entity_id:
+          - input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+        from:
+          - "off"
+        to:
+          - "on"
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+      - trigger: state
+        entity_id:
+          - automation.Webasto_Unite_Limit_to_Available_Solar_Power
+        to:
+          - "off"
+        from:
+          - "on"
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+      - trigger: state
+        entity_id:
+          - automation.webasto_unite_auto_adjust_current
+        to:
+          - "on"
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 2
+        from:
+          - "off"
+      - trigger: numeric_state
+        entity_id:
+          - sensor.webasto_unite_resting_solar_wait_time
+        below: 1
+      - trigger: time_pattern
+        minutes: /2
+    conditions:
+    - condition: and
+      conditions:
+        - condition: or
+          conditions:  
+          - condition: numeric_state
+            entity_id: sensor.webasto_unite_charge_point_state
+            above: 0
+            below: 6
+        - condition: or
+          conditions:  
+          - condition: state
+            entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+            state:
+              - "on"
+          - condition: numeric_state
+            entity_id: sensor.webasto_unite_resting_solar_wait_time
+            below: 1
+          - condition: state
+            entity_id: automation.Webasto_Unite_Limit_to_Available_Solar_Power
+            state:
+              - "off"
+          - condition: numeric_state
+            entity_id: sensor.webasto_unite_max_grid_available_current
+            below: input_number.webasto_unite_current_value_slider
+    actions:
+      - action: input_number.set_value
+        metadata: {}
+        target:
+          entity_id: input_number.webasto_unite_current_value_slider
+        data:
+          value: "{{states('sensor.webasto_unite_max_grid_available_current') | int(6)}}"
+    mode: single
+    
+  - alias: Webasto Unite Limit to Available Solar Power
+    id: Webasto_Unite_Limit_to_Available_Solar_Power
+    description: 'Webasto Unite Limit to Available Solar Power'
+    triggers:
+    - trigger: numeric_state
+      entity_id:
+      - sensor.webasto_unite_average_available_solar_current
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 15
+      below: input_number.webasto_unite_current_value_slider
+    - trigger: numeric_state
+      entity_id:
+      - sensor.webasto_unite_average_available_solar_current
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 15
+      above: input_number.webasto_unite_current_value_slider
+    - trigger: numeric_state
+      entity_id:
+      - sensor.webasto_unite_charge_point_state
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 2
+      above: 0
+      below: 6
+    - trigger: state
+      entity_id:
+      - input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+      to:
+      - 'off'
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 2
+      from:
+      - 'on'
+    - trigger: state
+      entity_id:
+      - automation.webasto_unite_auto_adjust_current
+      to:
+      - 'off'
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 2
+      from:
+      - 'on'
+    - trigger: state
+      entity_id:
+      - automation.Webasto_Unite_Limit_to_Available_Solar_Power
+      from:
+      - 'off'
+      to:
+      - 'on'
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 2
+    - trigger: numeric_state
+      entity_id:
+      - sensor.webasto_unite_resting_solar_wait_time
+      above: 1
+    - trigger: state
+      entity_id:
+      - input_number.webasto_unite_minimum_solar_current_value_slider
+      for:
+        seconds: 1
+    - trigger: time_pattern
+      minutes: /2
+    conditions:
+    - condition: and
+      conditions:
+      - condition: numeric_state
+        entity_id: sensor.webasto_unite_charge_point_state
+        above: 0
+        below: 6
+      - condition: state
+        entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+        state:
+        - 'off'
+      - condition: numeric_state
+        entity_id: sensor.webasto_unite_resting_solar_wait_time
+        above: 1
+    actions:
+    - action: input_number.set_value
+      metadata: {}
+      target:
+        entity_id: input_number.webasto_unite_current_value_slider
+      data:
+        value: >
+          {{ clamp(
+              states('sensor.webasto_unite_average_available_solar_current') | int(0),
+              states('input_number.webasto_unite_minimum_solar_current_value_slider') | int(0),
+              states('sensor.webasto_unite_evse_max_current') | int(0)
+          ) }}
+    mode: single
+# This automation is executed as soon as the charger becomes available      
+  - alias: Webasto Unite Reset Onetime Skip Solar Energy Usage
+    id: Webasto_Unite_Reset_Onetime_Skip_Solar_Energy_Usage
+    description: 'Webasto Reset Onetime Skip Solar Energy Usage'
+    triggers:
+    - trigger: numeric_state
+      entity_id:
+      - sensor.webasto_unite_charge_point_state
+      for:
+        hours: 0
+        minutes: 0
+        seconds: 2
+      above: -1
+      below: 1
+    conditions: []
+# switch off onetime skip solar energy usage
+    actions:
+    - action: input_boolean.turn_off
+      metadata: {}
+      target:
+        entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+      data: {}
+# reset minimum solar current
+    - action: input_number.set_value
+      metadata: {}
+      target:
+        entity_id: input_number.webasto_unite_minimum_solar_current_value_slider
+      data:
+        value: 0
+    mode: single
+# This automation is executed as soon as charging is really starting      
+  - alias: Webasto Unite Charging is Starting
+    id: Webasto_Unite_Charging_is_Starting
+    description: 'Initialize charging by setting charge current to max for a short time'
+    triggers:
+      - trigger: numeric_state
+        entity_id:
+          - input_number.webasto_unite_current_value_slider
+        above: 5
+        for:
+          hours: 0
+          minutes: 0
+          seconds: 10
+    conditions:
+      - condition: state
+        entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
+        state:
+        - 'off'
+      - condition: numeric_state
+        entity_id: sensor.webasto_unite_resting_solar_wait_time
+        above: 1
+      - condition: state
+        entity_id: automation.webasto_unite_limit_to_available_solar_power
+        state:
+          - 'on'
+    actions:
+      - action: input_number.set_value
+        metadata: {}
+# Set current to maximum available from the grid
+        target:
+          entity_id: input_number.webasto_unite_current_value_slider
+        data:
+          value: "{{states('sensor.webasto_unite_max_grid_available_current') | int(0)}}"
+ # wait for 20 seconds
+      - delay:
+          hours: 0
+          minutes: 0
+          seconds: 20
+          milliseconds: 0
+ # set back to current average available solar current
+      - action: input_number.set_value
+        target:
+          entity_id: input_number.webasto_unite_current_value_slider
+        data:
+          value: "{{states('sensor.Webasto_Unite_Average_Available_Solar_Current') | int(0)}}"
+      - action: automation.trigger
+        metadata: {}
+        target:
+          entity_id: automation.webasto_unite_limit_to_available_solar_power
+        data:
+          skip_condition: false
+ # wait for 25 sceconds
+      - delay:
+          hours: 0
+          minutes: 0
+          seconds: 25
+          milliseconds: 0
+    mode: single

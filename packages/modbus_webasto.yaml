@@ -8,6 +8,7 @@
 # 2026-08-04 - Added support for reserving solar power for the home battery, is charged level is below a settable level
 # 2026-08-17 - Added slider for minimum charge current when solar power is used
 # 2026-08-20 - When solar power is used, after cable is connected, charge for 30 sec on full power. Some cars needs this to inialize the charge process
+# 2026-09-09 - Above is changed to: When solar is used for charging, every time charging is (re)started, charge for 30 sec on full power.
 # 
 # 1. Copy this file to the 'homeassistant/packages' folder (create folder if not yet exists)
 # 2. Fill in your sensors for the grid power measurement in the code lines below
@@ -640,7 +641,6 @@ input_number:
     name: Webasto Unite Solar Timeout hours
     min: 1
     max: 72
-    initial: 24
     step: 1
     unit_of_measurement: 'h'
     icon: "mdi:timer-sync"
@@ -649,7 +649,6 @@ input_number:
     name: "Webasto Unite Power Reserve for Battery"
     min: 0
     max: 2000
-    initial: 800
     step: 100
     unit_of_measurement: 'W'
     icon: "mdi:home-battery"
@@ -658,7 +657,6 @@ input_number:
     name: "Webasto Unite Minimum Battery Level %"
     min: 0
     max: 100
-    initial: 65
     step: 1
     unit_of_measurement: '%'
     icon: "mdi:battery-positive"
@@ -1009,31 +1007,34 @@ automation:
       above: -1
       below: 1
     conditions: []
+# switch off onetime skip solar energy usage
     actions:
     - action: input_boolean.turn_off
       metadata: {}
       target:
         entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
       data: {}
+# reset minimum solar current
+    - action: input_number.set_value
+      metadata: {}
+      target:
+        entity_id: input_number.webasto_unite_minimum_solar_current_value_slider
+      data:
+        value: 0
     mode: single
-# This automation is executed as soon as charging is starting      
+# This automation is executed as soon as charging is really starting      
   - alias: Webasto Unite Charging is Starting
     id: Webasto_Unite_Charging_is_Starting
     description: 'Initialize charging by setting charge current to max for a short time'
     triggers:
-      - trigger: state
-        entity_id: sensor.webasto_unite_charge_point_state
-        from:
-          - '0'
-        to:
-          - '1'
-          - '2'
-          - '3'
-          - '4'
+      - trigger: numeric_state
+        entity_id:
+          - input_number.webasto_unite_current_value_slider
+        above: 5
         for:
           hours: 0
           minutes: 0
-          seconds: 2
+          seconds: 10
     conditions:
       - condition: state
         entity_id: input_boolean.webasto_unite_onetime_skip_solar_energy_usage
@@ -1054,11 +1055,11 @@ automation:
           entity_id: input_number.webasto_unite_current_value_slider
         data:
           value: "{{states('sensor.webasto_unite_max_grid_available_current') | int(0)}}"
- # wait for 30 seconds
+ # wait for 20 seconds
       - delay:
           hours: 0
           minutes: 0
-          seconds: 30
+          seconds: 20
           milliseconds: 0
  # set back to current average available solar current
       - action: input_number.set_value
